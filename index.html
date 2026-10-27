@@ -86,6 +86,13 @@ details ul{padding-left:18px;margin:8px 0 0}
 .ln.cur{background:var(--band);color:#fff}
 .ln.cur::before{content:"";position:absolute;left:-12px;top:.25em;bottom:.25em;width:4px;border-radius:2px;background:var(--cue)}
 .ln.past{color:var(--done)}
+.ln .w.cue{color:var(--cue);opacity:.75;font-size:.55em;font-family:var(--mono);letter-spacing:.02em;vertical-align:.15em}
+.ln.cueline{font-size:.55em;font-family:var(--mono);color:var(--cue);opacity:.8;padding-left:.6em;border-left:2px solid rgba(255,181,71,.45);border-radius:0;margin:.2em 0 .7em}
+.ln.cueline .w.cue{font-size:1em;opacity:1;vertical-align:0}
+.ln.past .w.cue,.ln.cueline.past{opacity:.4}
+#script.hidecues .w.cue,#script.hidecues .ln.cueline{display:none}
+.toggle{display:flex;gap:10px;align-items:center;font-size:15px;min-height:44px}
+.toggle input{width:20px;height:20px;accent-color:var(--cue)}
 .endmark{margin-top:1.2em;color:var(--done);font-size:.5em;letter-spacing:.2em;text-transform:uppercase}
 
 #banner{position:absolute;left:var(--gutter-l);right:var(--gutter-r);top:10px;z-index:3;background:#2a1d08;border:1px solid rgba(255,181,71,.45);color:#ffd99c;border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.4;display:flex;gap:10px;align-items:flex-start}
@@ -127,6 +134,9 @@ details ul{padding-left:18px;margin:8px 0 0}
       <span class="meta" id="count"></span>
     </div>
     <div class="note" id="fileNote" role="status"></div>
+
+    <label class="toggle" for="showCues"><input type="checkbox" id="showCues" checked> Show slide cues and [notes] as small reminders</label>
+    <p class="sub" style="font-size:14px;margin-top:-10px">Lines starting with "Slide" and anything in [brackets] are never tracked by voice, either way.</p>
 
     <div class="row">
       <button class="btn primary" id="open" type="button">Open prompter</button>
@@ -215,11 +225,19 @@ function norm(s){
 }
 function tokens(s){const n=norm(s);return n?n.split(" "):[];}
 
+// Stage directions: whole lines starting with "Slide", and anything inside [brackets]
+const SLIDE_RE=/^[\s*_#>•\-–—(]*slide\b/i;
+function spokenOnly(text){
+  return text.replace(/\r/g,"").split("\n").filter(l=>!SLIDE_RE.test(l)).join("\n").replace(/\[[^\]\n]*\]?/g," ");
+}
+
 function splitLines(text){
   const MAX=13;
   const out=[];
   const paras=text.replace(/\r/g,"").split(/\n+/).map(s=>s.trim()).filter(Boolean);
   paras.forEach(p=>{
+    if(SLIDE_RE.test(p)){out.push({text:p,paraEnd:true,cue:true});return;}
+    p=p.replace(/\[/g," [").replace(/\]/g,"] ").replace(/\s+/g," ").trim();
     const sents=p.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)/g)||[p];
     const chunks=[];
     sents.forEach(s=>{
@@ -325,7 +343,7 @@ const ta=$("text");
 ta.value=store.get("script","")||SAMPLE;
 
 function updateCount(){
-  const n=tokens(ta.value).length;
+  const n=tokens(spokenOnly(ta.value)).length;
   const mins=n/135;
   $("count").textContent=n?`${n.toLocaleString()} words · about ${mins<1?"<1":Math.round(mins)} min`:"";
   const saved=store.get("posFor",null);
@@ -380,23 +398,32 @@ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 function build(){
   const box=$("script"); box.innerHTML="";
   W=[];wLine=[];wEl=[];lines=[];
+  let depth=0;
   splitLines(ta.value).forEach((L,li)=>{
     const el=document.createElement("div");
-    el.className="ln"+(L.paraEnd?" pe":"");
+    el.className="ln"+(L.paraEnd?" pe":"")+(L.cue?" cueline":"");
     el.dataset.i=li;
     const start=W.length;
+    let spoken=0;
     L.text.split(/\s+/).forEach((word,k)=>{
       const sp=document.createElement("span");
-      sp.className="w"; sp.textContent=word;
+      sp.textContent=word;
+      const opens=(word.match(/\[/g)||[]).length, closes=(word.match(/\]/g)||[]).length;
+      const isCue=L.cue||depth>0||opens>0;
+      depth=Math.max(0,depth+opens-closes);
+      sp.className=isCue?"w cue":"w";
       if(k) el.appendChild(document.createTextNode(" "));
       el.appendChild(sp);
-      tokens(word).forEach(t=>{W.push(t);wLine.push(li);wEl.push(sp);});
+      if(!isCue){tokens(word).forEach(t=>{W.push(t);wLine.push(li);wEl.push(sp);});spoken++;}
     });
+    if(L.paraEnd) depth=0; // an unclosed bracket never swallows the next paragraph
+    if(!L.cue&&!spoken) el.classList.add("cueline");
     lines.push({el,start,end:W.length});
     box.appendChild(el);
   });
   const end=document.createElement("div"); end.className="endmark"; end.textContent="End of script";
   box.appendChild(end);
+  box.classList.toggle("hidecues",!$("showCues").checked);
   scriptKey=keyOf(ta.value);
   curLine=-1;
 }
@@ -437,7 +464,7 @@ function scrollToLine(li,instant){
 
 /* ---------- views ---------- */
 function openPrompter(resume){
-  if(!tokens(ta.value).length){$("fileNote").textContent="Add your speech first.";return;}
+  if(!tokens(spokenOnly(ta.value)).length){$("fileNote").textContent="Add your speech first.";return;}
   store.set("script",ta.value);
   build();
   $("setup").hidden=true; $("prompter").hidden=false;
@@ -583,9 +610,12 @@ document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible"&&running){keepAwake();if(mode==="voice"&&!rec){try{rec=makeRec();rec.start();}catch(e){}}}
 });
 
+$("showCues").checked=store.get("showCues",true);
+$("showCues").addEventListener("change",e=>store.set("showCues",e.target.checked));
+
 updateCount();
-// expose matcher for testing
-window.__pp={locate,tokens,splitLines};
+// expose for testing
+window.__pp={locate,tokens,splitLines,spokenOnly,words:()=>W.slice(),lines:()=>lines};
 })();
 </script>
 </body>
