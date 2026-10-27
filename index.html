@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Podium Prompter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: setup screen (script in, settings) -> full-screen prompter with reading line at ~1/3 height */
+:root{
+  --bg:#0b0d10;
+  --panel:#14171c;
+  --rule:#262b33;
+  --fg:#f3f0e8;
+  --ahead:#c8c4ba;
+  --done:#545a64;
+  --muted:#9aa1ad;
+  --cue:#ffb547;
+  --band:rgba(255,181,71,.10);
+  --tally:#ff3b30;
+  --ok:#34c759;
+  --font:"Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs:34px;
+  --gutter-l:max(16px, env(safe-area-inset-left, 0px));
+  --gutter-r:max(16px, env(safe-area-inset-right, 0px));
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:16px;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--cue);outline-offset:2px}
+
+/* ---------- Setup ---------- */
+#setup{min-height:100%;padding-top:calc(env(safe-area-inset-top,0px) + 20px);padding-bottom:calc(env(safe-area-inset-bottom,0px) + 28px);padding-left:var(--gutter-l);padding-right:var(--gutter-r)}
+.wrap{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{margin:0;font-size:24px;letter-spacing:.01em}
+.tallydot{width:12px;height:12px;border-radius:50%;background:var(--tally);box-shadow:0 0 10px rgba(255,59,48,.6);flex:none}
+.sub{margin:0;color:var(--muted);line-height:1.45}
+.check{display:flex;gap:8px;align-items:flex-start;font-size:14px;line-height:1.4;padding:10px 12px;border:1px solid var(--rule);border-radius:10px;background:var(--panel)}
+.check b{font-weight:700}
+.check .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;background:var(--ok)}
+.check.bad .dot{background:var(--tally)}
+label.lbl{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+textarea{width:100%;min-height:42vh;resize:vertical;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:14px;line-height:1.5;font-size:16px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{border:1px solid var(--rule);background:var(--panel);border-radius:10px;padding:11px 16px;font-size:15px;min-height:44px}
+.btn.primary{background:var(--cue);border-color:var(--cue);color:#1a1205;font-weight:700;font-size:17px;padding:14px 20px;flex:1 1 auto}
+.btn.ghost{background:transparent}
+.meta{font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.note{font-size:14px;color:#e8a33a;min-height:1em}
+details{border-top:1px solid var(--rule);padding-top:12px;color:var(--muted);font-size:14px;line-height:1.5}
+details summary{cursor:pointer;color:var(--fg)}
+details ul{padding-left:18px;margin:8px 0 0}
+.file{position:relative;overflow:hidden}
+.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+
+/* ---------- Prompter ---------- */
+#prompter{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;background:var(--bg)}
+.top{display:flex;align-items:center;gap:8px;padding-top:calc(env(safe-area-inset-top,0px) + 8px);padding-bottom:8px;padding-left:var(--gutter-l);padding-right:var(--gutter-r);border-bottom:1px solid var(--rule)}
+.top .sp{flex:1}
+.ib{min-width:44px;height:40px;border-radius:9px;border:1px solid var(--rule);background:var(--panel);font-size:15px;padding:0 10px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:6px 10px;border-radius:999px;border:1px solid var(--rule);color:var(--muted)}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--done)}
+.pill.live{color:#fff;border-color:rgba(255,59,48,.5)}
+.pill.live i{background:var(--tally);box-shadow:0 0 8px var(--tally);animation:pulse 1.6s ease-in-out infinite}
+.pill.auto i{background:var(--cue)}
+.pill.warn{color:var(--cue);border-color:rgba(255,181,71,.5)}
+.pill.warn i{background:var(--cue)}
+@keyframes pulse{50%{opacity:.35}}
+.clock{font-family:var(--mono);font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+#stage{position:relative;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+#script{padding-top:30vh;padding-bottom:70vh;padding-left:max(22px, env(safe-area-inset-left, 0px));padding-right:max(22px, env(safe-area-inset-right, 0px));font-size:var(--fs);line-height:1.3;max-width:900px;margin:0 auto}
+.ln{position:relative;color:var(--ahead);padding:.1em .28em;margin:0 -.28em;border-radius:8px;transition:background-color .25s,color .25s}
+.ln.pe{margin-bottom:.55em}
+.ln .w.done{color:var(--done)}
+.ln.cur{background:var(--band);color:#fff}
+.ln.cur::before{content:"";position:absolute;left:-12px;top:.25em;bottom:.25em;width:4px;border-radius:2px;background:var(--cue)}
+.ln.past{color:var(--done)}
+.endmark{margin-top:1.2em;color:var(--done);font-size:.5em;letter-spacing:.2em;text-transform:uppercase}
+
+#banner{position:absolute;left:var(--gutter-l);right:var(--gutter-r);top:10px;z-index:3;background:#2a1d08;border:1px solid rgba(255,181,71,.45);color:#ffd99c;border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.4;display:flex;gap:10px;align-items:flex-start}
+#banner button{margin-left:auto;background:none;border:0;color:inherit;font-size:18px;line-height:1;padding:0 4px}
+
+.bottom{border-top:1px solid var(--rule);padding-top:10px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 10px);padding-left:var(--gutter-l);padding-right:var(--gutter-r);display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.ctrl{display:grid;grid-template-columns:56px 1fr 56px;gap:10px}
+.nudge{height:56px;border-radius:12px;border:1px solid var(--rule);background:var(--panel);font-size:22px}
+#go{height:56px;border-radius:12px;border:0;background:var(--cue);color:#1a1205;font-weight:700;font-size:18px}
+#go.on{background:#2b2f37;color:#fff}
+.mode{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:8px 14px;font-size:14px;color:var(--muted);min-height:38px}
+.seg button[aria-pressed="true"]{background:var(--panel);color:#fff}
+#speedwrap{display:flex;align-items:center;gap:8px;flex:1;min-width:160px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+#speed{flex:1;accent-color:var(--cue)}
+.prog{height:3px;background:var(--rule);border-radius:2px;overflow:hidden}
+.prog b{display:block;height:100%;width:0;background:var(--cue);transition:width .3s}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<section id="setup">
+  <div class="wrap">
+    <div class="brand"><span class="tallydot" aria-hidden="true"></span><h1>Podium Prompter</h1></div>
+    <p class="sub">Paste or load your speech. The prompter listens as you talk, highlights the line you're on, and scrolls with you.</p>
+
+    <div id="support" class="check"><span class="dot"></span><span id="supportText">Checking voice support…</span></div>
+
+    <label class="lbl" for="text">Your speech</label>
+    <textarea id="text" spellcheck="false" placeholder="Paste your speech here"></textarea>
+
+    <div class="row">
+      <span class="btn file">Load .txt or .docx<input id="file" type="file" accept=".txt,.md,.text,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></span>
+      <button class="btn ghost" id="clear" type="button">Clear</button>
+      <span class="meta" id="count"></span>
+    </div>
+    <div class="note" id="fileNote" role="status"></div>
+
+    <div class="row">
+      <button class="btn primary" id="open" type="button">Open prompter</button>
+      <button class="btn" id="resume" type="button" hidden>Resume</button>
+    </div>
+
+    <details>
+      <summary>Before you go on stage</summary>
+      <ul>
+        <li>Voice following uses Chrome's speech service, so it needs Wi-Fi or cell signal.</li>
+        <li>The first time you tap Start, Chrome asks for the microphone. Allow it.</li>
+        <li>If it ever loses you, tap the line you're on. It picks up from there.</li>
+        <li>Auto mode scrolls at a fixed pace with no microphone, as a backup.</li>
+        <li>Turn on Do Not Disturb so a notification can't cover the text.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<!-- ============ PROMPTER ============ -->
+<section id="prompter" hidden>
+  <div class="top">
+    <button class="ib" id="back" type="button" aria-label="Back to script">◀ Edit</button>
+    <span class="pill" id="status"><i></i><span id="statusText">Paused</span></span>
+    <span class="sp"></span>
+    <span class="clock" id="clock">0:00</span>
+    <button class="ib" id="smaller" type="button" aria-label="Smaller text">A−</button>
+    <button class="ib" id="bigger" type="button" aria-label="Larger text">A+</button>
+  </div>
+
+  <div id="stage">
+    <div id="banner" role="alert" hidden><span id="bannerText"></span><button type="button" id="bannerX" aria-label="Dismiss">×</button></div>
+    <div id="script"></div>
+  </div>
+
+  <div class="bottom">
+    <div class="prog" aria-hidden="true"><b id="progbar"></b></div>
+    <div class="ctrl">
+      <button class="nudge" id="prev" type="button" aria-label="Previous line">↑</button>
+      <button id="go" type="button">Start listening</button>
+      <button class="nudge" id="next" type="button" aria-label="Next line">↓</button>
+    </div>
+    <div class="mode">
+      <div class="seg" role="group" aria-label="Scroll mode">
+        <button type="button" id="mVoice" aria-pressed="true">Voice</button>
+        <button type="button" id="mAuto" aria-pressed="false">Auto</button>
+      </div>
+      <div id="speedwrap" hidden>
+        <label for="speed">Pace</label>
+        <input id="speed" type="range" min="80" max="200" step="5" value="135">
+        <span id="speedVal">135 wpm</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- storage (safe) ---------- */
+const store={
+  get(k,d){try{const v=localStorage.getItem("pp."+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
+  set(k,v){try{localStorage.setItem("pp."+k,JSON.stringify(v))}catch(e){}}
+};
+const $=id=>document.getElementById(id);
+
+const SAMPLE=`Good morning, everyone, and thank you for being here.
+
+This is sample text, so replace it with your own speech. Paste it in above, or load a text or Word file.
+
+When you tap Start listening, the prompter follows your voice. The line you are reading is highlighted, and the words you have already said fade out.
+
+If you skip a sentence, it catches up. If you go off script for a moment, it waits for you to come back.
+
+And if it ever loses you, just tap the line you are on.
+
+Thank you.`;
+
+/* ---------- text model ---------- */
+const STOP=new Set("a an the and or but nor of to in on at for with by from as is are was were be been am it its this that these those i we you they he she our your their my me us so do does did not no if then than there here have has had will would can could just".split(" "));
+const NUMW=new Set("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion percent first second third half dozen".split(" "));
+
+function norm(s){
+  return s.toLowerCase().replace(/[’‘`']/g,"").replace(/&/g," and ").replace(/%/g," percent ").replace(/\$/g," ").replace(/[^a-z0-9]+/g," ").trim();
+}
+function tokens(s){const n=norm(s);return n?n.split(" "):[];}
+
+function splitLines(text){
+  const MAX=13;
+  const out=[];
+  const paras=text.replace(/\r/g,"").split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  paras.forEach(p=>{
+    const sents=p.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)/g)||[p];
+    const chunks=[];
+    sents.forEach(s=>{
+      s=s.trim(); if(!s) return;
+      const ws=s.split(/\s+/);
+      if(ws.length<=MAX){chunks.push(s);return;}
+      // break long sentences at commas/semicolons, then by length
+      const parts=s.split(/(?<=[,;:—–])\s+/);
+      let buf=[];
+      parts.forEach(part=>{
+        const pw=part.split(/\s+/);
+        if(buf.length && buf.length+pw.length>MAX){chunks.push(buf.join(" "));buf=[];}
+        buf=buf.concat(pw);
+        while(buf.length>MAX+3){chunks.push(buf.slice(0,10).join(" "));buf=buf.slice(10);}
+      });
+      if(buf.length) chunks.push(buf.join(" "));
+    });
+    chunks.forEach((c,i)=>out.push({text:c,paraEnd:i===chunks.length-1}));
+  });
+  return out;
+}
+
+/* ---------- fuzzy matching ---------- */
+function lev(a,b){
+  const m=a.length,n=b.length; if(!m) return n; if(!n) return m;
+  let prev=new Array(n+1),cur=new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j]=j;
+  for(let i=1;i<=m;i++){
+    cur[0]=i;
+    for(let j=1;j<=n;j++){
+      cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    }
+    [prev,cur]=[cur,prev];
+  }
+  return prev[n];
+}
+const isNum=t=>/\d/.test(t)||NUMW.has(t);
+function sim(a,b){
+  if(a===b) return true;
+  if(isNum(a)&&isNum(b)) return true;
+  if(a.length<4||b.length<4) return false;
+  if(a.slice(0,4)===b.slice(0,4)&&Math.abs(a.length-b.length)<=3) return true;
+  const L=Math.max(a.length,b.length);
+  if(L<=4) return false;
+  return lev(a,b)<=(L<=7?1:2);
+}
+const wt=t=>STOP.has(t)?0.35:1;
+
+// weighted LCS of spoken tail S against script words ending at j; S's last word must match words[j]
+function score(S,W,j){
+  const k=S.length;
+  if(!sim(S[k-1],W[j])) return -1;
+  const lo=Math.max(0,j-k-3);
+  const T=W.slice(lo,j+1); const n=T.length;
+  let prev=new Float32Array(n+1),cur=new Float32Array(n+1);
+  for(let i=1;i<=k;i++){
+    cur[0]=0;
+    for(let m=1;m<=n;m++){
+      let v=Math.max(prev[m],cur[m-1]);
+      if(sim(S[i-1],T[m-1])){const d=prev[m-1]+wt(S[i-1]); if(d>v) v=d;}
+      cur[m]=v;
+    }
+    [prev,cur]=[cur,prev];
+  }
+  return prev[n];
+}
+
+// returns new position (index of next word to be spoken) or -1
+function locate(spoken,W,pos,lost){
+  if(!spoken.length) return -1;
+  const ahead=lost>4?120:lost>1?60:32;
+  let best=null;
+  const tails=[spoken.slice(-7)];
+  if(spoken.length>1) tails.push(spoken.slice(-8,-1)); // last word may be a half-heard interim
+  tails.forEach((S,ti)=>{
+    for(let j=Math.max(0,pos-1);j<Math.min(W.length,pos+ahead);j++){
+      const sc=score(S,W,j); if(sc<0) continue;
+      const dist=j-(pos-1);
+      const anchorStop=STOP.has(S[S.length-1]);
+      const need=anchorStop?2.6:(dist<=2?1:dist<=8?1.8:3);
+      if(sc<need) continue;
+      const adj=sc-dist*0.02-ti*0.3;
+      if(!best||adj>best.adj) best={j,adj};
+    }
+  });
+  return best?best.j+1:-1;
+}
+
+/* ---------- state ---------- */
+let W=[];        // normalized script words
+let wLine=[];    // line index per word
+let wEl=[];      // span per word (a display word may own several normalized words)
+let lines=[];    // {el,start,end}
+let pos=0, curLine=-1;
+let mode=store.get("mode","voice");
+let running=false;
+let fs=store.get("fs",34);
+let wpm=store.get("wpm",135);
+let elapsed=0, tick=null, lastT=0, autoAcc=0;
+let scriptKey="";
+
+const ta=$("text");
+ta.value=store.get("script","")||SAMPLE;
+
+function updateCount(){
+  const n=tokens(ta.value).length;
+  const mins=n/135;
+  $("count").textContent=n?`${n.toLocaleString()} words · about ${mins<1?"<1":Math.round(mins)} min`:"";
+  const saved=store.get("posFor",null);
+  const resumable=saved && saved.key===keyOf(ta.value) && saved.pos>0;
+  $("resume").hidden=!resumable;
+  if(resumable) $("resume").textContent=`Resume at ${Math.round(saved.pos/Math.max(1,n)*100)}%`;
+}
+function keyOf(t){let h=0;for(let i=0;i<t.length;i++){h=(h*31+t.charCodeAt(i))|0}return h+":"+t.length;}
+
+let saveT=null;
+ta.addEventListener("input",()=>{clearTimeout(saveT);saveT=setTimeout(()=>store.set("script",ta.value),300);updateCount();});
+$("clear").addEventListener("click",()=>{ta.value="";store.set("script","");updateCount();ta.focus();});
+
+/* ---------- file loading ---------- */
+function loadJS(src){return new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+async function readDocx(file){
+  if(!window.mammoth){
+    try{await loadJS("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");}
+    catch(e){await loadJS("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js");}
+  }
+  const r=await window.mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()});
+  return r.value;
+}
+$("file").addEventListener("change",async e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  const note=$("fileNote"); note.textContent="Reading "+f.name+"…";
+  try{
+    let txt;
+    const name=f.name.toLowerCase();
+    if(name.endsWith(".docx")) txt=await readDocx(f);
+    else if(name.endsWith(".doc")||name.endsWith(".pdf")||name.endsWith(".pages")){note.textContent="That format isn't supported. Save it as .docx or .txt, or copy and paste the text.";return;}
+    else txt=await f.text();
+    txt=txt.replace(/\n{3,}/g,"\n\n").trim();
+    if(!txt){note.textContent="That file looks empty.";return;}
+    ta.value=txt; store.set("script",txt); updateCount();
+    note.textContent="Loaded "+f.name+".";
+  }catch(err){
+    note.textContent="Couldn't read that file. For Word files this needs a connection the first time. You can also paste the text.";
+  }
+});
+
+/* ---------- support check ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+(function(){
+  const box=$("support"),t=$("supportText");
+  if(!SR){box.classList.add("bad");t.innerHTML="<b>Voice following isn't available in this browser.</b> Open this page in Chrome. Auto mode and tap-to-move still work.";return;}
+  if(!window.isSecureContext){box.classList.add("bad");t.innerHTML="<b>This page isn't on a secure (https) link,</b> so Chrome may block the microphone. If Start does nothing, host it on Netlify or GitHub Pages.";return;}
+  t.innerHTML="<b>Voice following is available.</b> Chrome will ask for the microphone when you tap Start.";
+})();
+
+/* ---------- build prompter ---------- */
+function build(){
+  const box=$("script"); box.innerHTML="";
+  W=[];wLine=[];wEl=[];lines=[];
+  splitLines(ta.value).forEach((L,li)=>{
+    const el=document.createElement("div");
+    el.className="ln"+(L.paraEnd?" pe":"");
+    el.dataset.i=li;
+    const start=W.length;
+    L.text.split(/\s+/).forEach((word,k)=>{
+      const sp=document.createElement("span");
+      sp.className="w"; sp.textContent=word;
+      if(k) el.appendChild(document.createTextNode(" "));
+      el.appendChild(sp);
+      tokens(word).forEach(t=>{W.push(t);wLine.push(li);wEl.push(sp);});
+    });
+    lines.push({el,start,end:W.length});
+    box.appendChild(el);
+  });
+  const end=document.createElement("div"); end.className="endmark"; end.textContent="End of script";
+  box.appendChild(end);
+  scriptKey=keyOf(ta.value);
+  curLine=-1;
+}
+
+function lineOf(p){
+  if(p<W.length) return wLine[p];
+  return lines.length-1;
+}
+
+function setPos(p,instant){
+  p=Math.max(0,Math.min(W.length,p));
+  const lo=Math.min(pos,p),hi=Math.max(pos,p);
+  pos=p;
+  for(let i=Math.max(0,lo-1);i<Math.min(W.length,hi+1);i++){
+    // a span is done when all its normalized words are before pos
+    const sp=wEl[i]; let last=i; while(last+1<W.length&&wEl[last+1]===sp) last++;
+    sp.classList.toggle("done",last<pos);
+  }
+  const li=lineOf(pos);
+  if(li!==curLine){
+    lines.forEach((L,i)=>{L.el.classList.toggle("cur",i===li);L.el.classList.toggle("past",i<li);});
+    curLine=li;
+    scrollToLine(li,instant);
+  }
+  $("progbar").style.width=(W.length?pos/W.length*100:0)+"%";
+  savePos();
+}
+let posSaveT=null;
+function savePos(){clearTimeout(posSaveT);posSaveT=setTimeout(()=>store.set("posFor",{key:scriptKey,pos}),400);}
+
+const reduced=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+function scrollToLine(li,instant){
+  const L=lines[li]; if(!L) return;
+  const stage=$("stage");
+  const top=L.el.offsetTop-stage.clientHeight*0.3;
+  stage.scrollTo({top:Math.max(0,top),behavior:(instant||reduced)?"auto":"smooth"});
+}
+
+/* ---------- views ---------- */
+function openPrompter(resume){
+  if(!tokens(ta.value).length){$("fileNote").textContent="Add your speech first.";return;}
+  store.set("script",ta.value);
+  build();
+  $("setup").hidden=true; $("prompter").hidden=false;
+  applyFont(); applyMode();
+  elapsed=0; renderClock();
+  pos=0;
+  const saved=store.get("posFor",null);
+  const start=(resume&&saved&&saved.key===scriptKey)?saved.pos:0;
+  lines.forEach(L=>L.el.classList.remove("cur","past"));
+  wEl.forEach(s=>s.classList.remove("done"));
+  requestAnimationFrame(()=>setPos(start,true));
+}
+$("open").addEventListener("click",()=>openPrompter(false));
+$("resume").addEventListener("click",()=>openPrompter(true));
+$("back").addEventListener("click",()=>{stop();$("prompter").hidden=true;$("setup").hidden=false;updateCount();});
+
+$("script").addEventListener("click",e=>{
+  const el=e.target.closest(".ln"); if(!el) return;
+  const L=lines[+el.dataset.i]; if(!L||L.start===L.end) return;
+  lost=0; setPos(L.start); lastSig="";
+});
+$("prev").addEventListener("click",()=>{let i=curLine-1;while(i>0&&lines[i].start===lines[i].end)i--;if(i>=0){setPos(lines[i].start);lastSig="";}});
+$("next").addEventListener("click",()=>{let i=curLine+1;while(i<lines.length-1&&lines[i].start===lines[i].end)i++;if(i<lines.length){setPos(lines[i].start);lastSig="";}});
+
+/* font */
+function applyFont(){document.documentElement.style.setProperty("--fs",fs+"px");store.set("fs",fs);}
+$("smaller").addEventListener("click",()=>{fs=Math.max(20,fs-3);applyFont();scrollToLine(curLine,true);});
+$("bigger").addEventListener("click",()=>{fs=Math.min(64,fs+3);applyFont();scrollToLine(curLine,true);});
+
+/* mode */
+function applyMode(){
+  $("mVoice").setAttribute("aria-pressed",mode==="voice");
+  $("mAuto").setAttribute("aria-pressed",mode==="auto");
+  $("speedwrap").hidden=mode!=="auto";
+  $("speed").value=wpm; $("speedVal").textContent=wpm+" wpm";
+  renderGo(); setStatus(running?(mode==="auto"?"auto":"live"):"paused");
+}
+function switchMode(m){if(m===mode)return;const was=running;stop();mode=m;store.set("mode",m);applyMode();if(was)start();}
+$("mVoice").addEventListener("click",()=>switchMode("voice"));
+$("mAuto").addEventListener("click",()=>switchMode("auto"));
+$("speed").addEventListener("input",e=>{wpm=+e.target.value;$("speedVal").textContent=wpm+" wpm";store.set("wpm",wpm);});
+
+/* status + banner */
+function setStatus(s){
+  const p=$("status"),t=$("statusText");
+  p.className="pill"+(s==="live"?" live":s==="auto"?" auto":(s==="reconnecting"||s==="lost")?" warn":"");
+  t.textContent={live:"Live",auto:"Auto",paused:"Paused",reconnecting:"Reconnecting",lost:"Searching",starting:"Starting"}[s]||s;
+}
+function banner(msg){$("bannerText").textContent=msg;$("banner").hidden=!msg;}
+$("bannerX").addEventListener("click",()=>banner(""));
+function renderGo(){
+  const g=$("go");
+  g.classList.toggle("on",running);
+  g.textContent=running?"Pause":(mode==="voice"?"Start listening":"Start scrolling");
+}
+
+/* clock */
+function renderClock(){const s=Math.floor(elapsed/1000);$("clock").textContent=Math.floor(s/60)+":"+String(s%60).padStart(2,"0");}
+function loop(){
+  const now=performance.now(),dt=now-lastT;lastT=now;
+  elapsed+=dt;renderClock();
+  if(mode==="auto"&&pos<W.length){
+    autoAcc+=wpm/60000*dt;
+    if(autoAcc>=1){const n=Math.floor(autoAcc);autoAcc-=n;setPos(pos+n);}
+  }
+}
+
+/* wake lock */
+let wake=null;
+async function keepAwake(){try{if("wakeLock" in navigator&&!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null;});}}catch(e){}}
+function releaseWake(){try{wake&&wake.release();}catch(e){}wake=null;}
+
+/* ---------- speech ---------- */
+let rec=null,want=false,lost=0,lastSig="",netFails=0,pending=null,raf=0;
+function makeRec(){
+  const r=new SR();
+  r.lang="en-US"; r.continuous=true; r.interimResults=true; r.maxAlternatives=1;
+  r.onstart=()=>{if(want){setStatus("live");}};
+  r.onresult=e=>{
+    let txt="";
+    for(let i=0;i<e.results.length;i++) txt+=" "+e.results[i][0].transcript;
+    const spoken=tokens(txt).slice(-9);
+    pending=spoken;
+    if(!raf) raf=requestAnimationFrame(process);
+    if(netFails){netFails=0;banner("");}
+  };
+  r.onerror=e=>{
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      want=false;running=false;renderGo();setStatus("paused");stopClock();
+      banner("Microphone blocked. In Chrome, tap the icon left of the address and allow the microphone. If you opened this as a local file, use the https link instead.");
+    }else if(e.error==="network"){
+      netFails++;
+      banner("No connection to Chrome's speech service. Tap lines to move, or switch to Auto. It keeps retrying.");
+    }else if(e.error==="audio-capture"){
+      banner("No microphone found. Check that no other app is using it.");
+    }
+  };
+  r.onend=()=>{
+    if(want){
+      setStatus("reconnecting");
+      setTimeout(()=>{if(!want)return;try{rec=makeRec();rec.start();}catch(err){}},netFails?1200:120);
+    }
+  };
+  return r;
+}
+function process(){
+  raf=0;
+  const spoken=pending; if(!spoken||!spoken.length) return;
+  const sig=spoken.join(" "); if(sig===lastSig) return; lastSig=sig;
+  const np=locate(spoken,W,pos,lost);
+  if(np>=0){
+    lost=0; if(np>pos) setPos(np);
+    if(want) setStatus("live");
+  }else{
+    lost++;
+    if(lost>6&&want) setStatus("lost");
+  }
+}
+function startVoice(){
+  if(!SR){banner("Voice following needs Chrome. Switch to Auto, or tap lines to move.");return false;}
+  want=true;lost=0;lastSig="";
+  setStatus("starting");
+  try{rec=makeRec();rec.start();}catch(e){}
+  return true;
+}
+function stopVoice(){want=false;try{rec&&rec.abort();}catch(e){}rec=null;}
+
+/* ---------- run control ---------- */
+function startClock(){lastT=performance.now();autoAcc=0;clearInterval(tick);tick=setInterval(loop,100);}
+function stopClock(){clearInterval(tick);tick=null;}
+function start(){
+  if(pos>=W.length) setPos(0,true);
+  if(mode==="voice"){if(!startVoice())return;}
+  running=true;renderGo();startClock();keepAwake();
+  if(mode==="auto") setStatus("auto");
+}
+function stop(){
+  running=false;stopVoice();stopClock();releaseWake();renderGo();setStatus("paused");
+}
+$("go").addEventListener("click",()=>running?stop():start());
+
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible"&&running){keepAwake();if(mode==="voice"&&!rec){try{rec=makeRec();rec.start();}catch(e){}}}
+});
+
+updateCount();
+// expose matcher for testing
+window.__pp={locate,tokens,splitLines};
+})();
+</script>
+</body>
+</html>
